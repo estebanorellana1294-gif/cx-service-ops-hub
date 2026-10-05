@@ -1,0 +1,11 @@
+# One command runs everything: `docker compose up --build`
+# Later phases add the rules engine and the dashboard as extra services.
+services:
+  mock-api:
+    build: ./services/mock-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Optional: pin the seed's reference date for reproducible screenshots.
+      SEED_REFERENCE_DATE: ${SEED_REFERENCE_DATE:-}
+      SEED_RANDOM: ${SEED_RANDOM:-42}
