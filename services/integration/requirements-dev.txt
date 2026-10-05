@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest==9.1.1
+# Contract tests run the mock API in-process.
+-r ../mock-api/requirements.txt

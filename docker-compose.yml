@@ -9,3 +9,15 @@ services:
       # Optional: pin the seed's reference date for reproducible screenshots.
       SEED_REFERENCE_DATE: ${SEED_REFERENCE_DATE:-}
       SEED_RANDOM: ${SEED_RANDOM:-42}
+      # Optional: share of API calls that fail with 503, to demo client retries.
+      MOCK_FAULT_RATE: ${MOCK_FAULT_RATE:-0}
+
+  # On-demand tool, not started by `up`:
+  #   docker compose run --rm integration --open-only
+  integration:
+    build: ./services/integration
+    profiles: ["tools"]
+    depends_on:
+      mock-api:
+        condition: service_healthy
+    entrypoint: ["python", "-m", "cx_integration", "--base-url", "http://mock-api:8000"]

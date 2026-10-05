@@ -24,7 +24,7 @@ put in front of that problem.
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Mock Service API | Done |
-| 2 | Integration layer + field mapping | Planned |
+| 2 | Integration layer + field mapping | Done |
 | 3 | Automation rules engine (YAML) | Planned |
 | 4 | KPI dashboard (React) | Planned |
 | 5 | Architecture docs, ADRs, DMAIC business case | Planned |
@@ -34,7 +34,8 @@ put in front of that problem.
 
 ```
 services/mock-api/     FastAPI mock of the serviceRequests resource
-docs/                  Design notes (api-assumptions.md, ...)
+services/integration/  Client + mapping to the canonical ticket model
+docs/                  Design notes (api-assumptions.md, field-mapping.md, ...)
 docker-compose.yml     Runs everything with one command
 ```
 
@@ -132,9 +133,79 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-46 tests cover every endpoint (paging, each filter operator, sorting,
-create/patch side effects, validation errors) and the properties of the seed
+48 tests cover every endpoint (paging, each filter operator, sorting,
+create/patch side effects, validation errors, fault injection) and the properties of the seed
 data.
+
+## Phase 2: Integration Layer
+
+`services/integration/` is a standalone Python package (`cx_integration`)
+that pulls service requests from the source API and turns them into
+NorthPeak's **canonical ticket model**. Downstream components (rules engine,
+dashboard) only ever see that model, never source codes like `ORA_SVC_SEV1`.
+
+```
+source API ──► client.py ──► mapping.py ──► canonical.Ticket ──► rules engine / dashboard
+              paging, retries   value maps,
+              typed errors      data-quality flags
+```
+
+| Module | Responsibility |
+|---|---|
+| `client.py` | HTTP calls, pagination (`limit`/`offset` until `hasMore=false`), error classification |
+| `retry.py` | Exponential backoff with full jitter, honors `Retry-After` |
+| `mapping.py` | Source record → canonical `Ticket`, value maps, data-quality flags, reject rules |
+| `canonical.py` | The canonical model (`Ticket`, `Priority`, `Queue`, `TicketStatus`, ...) |
+| `pipeline.py` | Extract + map + run report (read / mapped / rejected / flagged / retries) |
+
+**The functional deliverable is [docs/field-mapping.md](docs/field-mapping.md):**
+source field → canonical field → transformation rule → business reason, value
+maps, data-quality flags with owners, error handling and reconciliation
+controls.
+
+### Run it
+
+```bash
+docker compose up -d --build mock-api
+docker compose run --rm integration --open-only          # backlog extraction report
+
+# Show retries: make 30% of API calls fail with 503
+MOCK_FAULT_RATE=0.3 docker compose up -d mock-api
+docker compose run --rm integration --page-size 10 -v
+
+# Or run locally and save the canonical tickets to a file
+pip install -e services/integration
+python -m cx_integration --out tickets.json
+```
+
+### Design decisions
+
+* **Canonical model between source and consumers.** Swapping or adding a
+  ticket source means writing a new mapper. Rules and KPIs stay untouched.
+* **Keep the ticket, flag the defect.** Unknown codes get safe defaults plus a
+  data-quality flag. Only records without `SrNumber` or `CreationDate` are
+  rejected. Dropping tickets would hide real workload.
+* **Retry only what is safe to retry.** GET and PATCH retry on 429/5xx and
+  network errors. POST retries only when the server provably did not process
+  it, and a timeout after sending raises `UnknownOutcomeError` instead of
+  risking a duplicate ticket.
+* **Stable paging.** Extraction sorts by `SrId` and de-duplicates, so tickets
+  created mid-run don't cause skipped or repeated rows.
+* **Fail loudly on partial data.** If retries run out, the run fails instead of
+  returning an incomplete backlog.
+
+### Run the tests
+
+```bash
+cd services/integration
+pip install -r requirements-dev.txt
+pytest
+```
+
+98 tests: retry/backoff maths, pagination edge cases, retry policy per HTTP
+method and status, every mapping rule and flag, and contract tests that run
+the real mock API in-process. The contract tests include a 30%-fault run and
+reconcile source and target totals.
 
 ## License
 

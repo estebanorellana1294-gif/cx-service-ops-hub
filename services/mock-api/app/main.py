@@ -6,10 +6,12 @@ affiliated with or endorsed by Oracle. See docs/api-assumptions.md.
 """
 
 import os
+import random
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 
 from .models import (
     ServiceRequest,
@@ -39,7 +41,16 @@ def build_default_store() -> ServiceRequestStore:
     return ServiceRequestStore(tickets)
 
 
-def create_app(store: ServiceRequestStore | None = None) -> FastAPI:
+def create_app(
+    store: ServiceRequestStore | None = None,
+    fault_rate: float | None = None,
+    fault_seed: int = 0,
+) -> FastAPI:
+    """Build the app.
+
+    ``fault_rate`` (or env ``MOCK_FAULT_RATE``) makes that share of resource
+    calls fail with ``503 Service Unavailable``, to exercise client retries.
+    """
     app = FastAPI(
         title="NorthPeak Connect - Mock Service API",
         description=(
@@ -50,6 +61,21 @@ def create_app(store: ServiceRequestStore | None = None) -> FastAPI:
         version="1.0.0",
     )
     app.state.store = store if store is not None else build_default_store()
+    if fault_rate is None:
+        fault_rate = float(os.getenv("MOCK_FAULT_RATE", "0"))
+    if not 0 <= fault_rate <= 1:
+        raise ValueError("fault_rate must be between 0 and 1")
+    fault_rng = random.Random(fault_seed)
+
+    @app.middleware("http")
+    async def inject_faults(request: Request, call_next):
+        if fault_rate and request.url.path.startswith(BASE_PATH) and fault_rng.random() < fault_rate:
+            return JSONResponse(
+                {"detail": "Simulated outage (MOCK_FAULT_RATE)"},
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                headers={"Retry-After": "0"},
+            )
+        return await call_next(request)
 
     def get_store(request: Request) -> ServiceRequestStore:
         return request.app.state.store
