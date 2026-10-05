@@ -161,6 +161,13 @@ request bodies are accepted. Responses are `application/json`.
 Error bodies use FastAPI's `{"detail": ...}` format. The real API returns
 errors in a different format.
 
+## Fault injection (mock-only)
+
+Setting `MOCK_FAULT_RATE` (0 to 1) makes that share of calls to the resource
+fail with `503 Service Unavailable` and `Retry-After: 0`. It exists to
+demonstrate the integration layer's retry behavior and is not part of the
+modeled API. `/health` is never affected.
+
 ## Not modeled
 
 Authentication, ETags / optimistic locking, `DELETE`, child resources,

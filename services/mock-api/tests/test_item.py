@@ -1,3 +1,7 @@
+import pytest
+from fastapi.testclient import TestClient
+
+from app.main import create_app
 from tests.conftest import CLOCK_NOW
 
 NEW_TICKET = {
@@ -156,3 +160,15 @@ def test_openapi_documents_the_resource(client, base):
     paths = client.get("/openapi.json").json()["paths"]
     assert set(paths[base]) == {"get", "post"}
     assert set(paths[base + "/{sr_number}"]) == {"get", "patch"}
+
+
+def test_fault_injection_returns_503_with_retry_after(store, base):
+    faulty = TestClient(create_app(store, fault_rate=1.0))
+    resp = faulty.get(base)
+    assert resp.status_code == 503 and resp.headers["Retry-After"] == "0"
+    assert faulty.get("/health").status_code == 200  # ops endpoint is never faulted
+
+
+def test_fault_rate_is_validated(store):
+    with pytest.raises(ValueError):
+        create_app(store, fault_rate=1.5)
